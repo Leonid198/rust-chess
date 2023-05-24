@@ -3,15 +3,18 @@ use std::io;
 #[derive(Debug, PartialEq)]
 enum BoardError {
     WrongLength,
+    InvalidReference,
+    EmptyCell,
+    InvalidMove,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Colour {
     White,
     Black,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum Piece {
     Pawn,
     Knight,
@@ -180,7 +183,7 @@ impl Board {
         }
     }
 
-    pub fn display_debug(&self) {
+    fn display_debug(&self) {
         println!("┏━┳━┳━┳━┳━┳━┳━┳━┓",);
         for (row, _) in self.board.iter().enumerate() {
             let row_data = self.get_row(row);
@@ -205,28 +208,52 @@ impl Board {
         println!("┗━┻━┻━┻━┻━┻━┻━┻━┛",);
     }
 
+    fn get_cell_index(&self, cell: &str) -> Result<(usize, usize), BoardError> {
+        if cell.chars().count() != 2 {
+            return Err(BoardError::WrongLength);
+        }
+        Ok((
+            self.get_column_index(cell.chars().nth(0))?,
+            self.get_row_index(cell.chars().nth(1))?,
+        ))
+    }
+
+    fn get_column_index(&self, column: Option<char>) -> Result<usize, BoardError> {
+        let column = match column {
+            Some(x) => x as usize - 65, // 65 is A in unicode, this translates A to 0, B to 1, etc.
+            None => return Err(BoardError::WrongLength),
+        };
+        if column >= self.board.len() {
+            return Err(BoardError::InvalidReference);
+        };
+        Ok(column)
+    }
+
+    fn get_row_index(&self, row: Option<char>) -> Result<usize, BoardError> {
+        let row = match row {
+            Some(x) => x as usize - 48 - 1, // 48 is 0 in unicode, this converts the number characters to an integer.
+            None => return Err(BoardError::WrongLength),
+        };
+        if row >= self.board[0].len() {
+            return Err(BoardError::InvalidReference);
+        }
+        Ok(row)
+    }
+
     fn get_cell(&self, cell: &str) -> Result<&Option<(Colour, Piece)>, BoardError> {
         if cell.chars().count() != 2 {
             return Err(BoardError::WrongLength);
         }
         let column = self.get_column(cell.chars().nth(0))?;
-        let row = match cell.chars().nth(1) {
-            Some(x) => x as usize - 48, // 48 is 0 in unicode, this converts the number characters to an integer.
-            None => return Err(BoardError::WrongLength),
-        };
-
-        Ok(&column[row - 1])
+        let row = self.get_row_index(cell.chars().nth(1))?;
+        Ok(&column[row])
     }
 
-    // TODO: Fix
     fn get_column(
         &self,
         column: Option<char>,
     ) -> Result<&[Option<(Colour, Piece)>; 8], BoardError> {
-        let column = match column {
-            Some(x) => x as usize - 65, // 65 is A in unicode, this translates A to 0, B to 1, etc.
-            None => return Err(BoardError::WrongLength),
-        };
+        let column = self.get_column_index(column)?;
         Ok(&self.board[column])
     }
 
@@ -239,11 +266,73 @@ impl Board {
 
         output
     }
+
+    fn set_cell(&mut self, cell: &str, data: Option<(Colour, Piece)>) -> Result<(), BoardError> {
+        let cell = self.get_cell_index(cell)?;
+        self.board[cell.0][cell.1] = data;
+        Ok(())
+    }
+
+    fn board_move(&mut self, from_cell: &str, to_cell: &str) -> Result<(), BoardError> {
+        self.set_cell(to_cell, *self.get_cell(from_cell)?)?;
+        self.set_cell(from_cell, None)?;
+        Ok(())
+    }
+
+    fn validated_move(&mut self, from_cell: &str, to_cell: &str) -> Result<(), BoardError> {
+        let from_cell_index = self.get_cell_index(from_cell)?;
+        let to_cell_index = self.get_cell_index(to_cell)?;
+        let (colour, piece) = match self.get_cell(from_cell)? {
+            Some(x) => x,
+            None => return Err(BoardError::EmptyCell),
+        };
+
+        match piece {
+            Piece::Pawn => match colour {
+                Colour::White => {
+                    let range = if from_cell_index.1 == 1 { 2 } else { 1 };
+                    let distance = to_cell_index.1 as i8 - from_cell_index.1 as i8;
+                    let lateral = to_cell_index.0 as i8 - from_cell_index.0 as i8;
+                    if lateral.abs() <= 1 && 0 < distance && distance <= range {
+                        if lateral == 0 && !check_collision(from_cell_index + 1, to_cell_index)? {}
+                    } else {
+                        return Err(BoardError::InvalidMove);
+                    }
+                }
+                Colour::Black => unimplemented!(),
+            },
+            Piece::Knight => unimplemented!(),
+            Piece::Bishop => unimplemented!(),
+            Piece::Rook => unimplemented!(),
+            Piece::Queen => unimplemented!(),
+            Piece::King => unimplemented!(),
+        }
+        Ok(())
+    }
+
+    fn check_collision(
+        &self,
+        from_cell_index: usize,
+        to_cell_index: usize,
+    ) -> Result<bool, BoardError> {
+        unimplemented!()
+    }
 }
 
 fn main() {
-    let board = Board::new();
+    let mut board = Board::new();
     board.display_debug();
+    loop {
+        let mut player_move = String::new();
+        io::stdin()
+            .read_line(&mut player_move)
+            .expect("Failed to read line");
+        match board.board_move(&player_move[..2], &player_move[3..5]) {
+            Ok(()) => (),
+            Err(x) => println!("{x:?}"),
+        }
+        board.display_debug();
+    }
 }
 
 #[cfg(test)]
@@ -348,7 +437,24 @@ mod tests {
             board.get_cell("A1").unwrap(),
             &Some((Colour::White, Piece::Rook))
         );
-        assert_eq!(board.get_cell("N1"), Err(BoardError::WrongLength));
+        assert_eq!(board.get_cell("N1"), Err(BoardError::InvalidReference));
+        assert_eq!(board.get_cell("I9"), Err(BoardError::InvalidReference));
         assert_eq!(board.get_cell("C3").unwrap(), &None);
+    }
+    #[test]
+    fn set_cell() {
+        let mut board = Board::new();
+        board.set_cell("A1", None).unwrap();
+        assert_eq!(board.get_cell("A1").unwrap(), &None);
+    }
+    #[test]
+    fn board_move() {
+        let mut board = Board::new();
+        board.board_move("E1", "E3").unwrap();
+        assert_eq!(board.get_cell("E1").unwrap(), &None);
+        assert_eq!(
+            board.get_cell("E3").unwrap(),
+            &Some((Colour::White, Piece::King))
+        );
     }
 }
